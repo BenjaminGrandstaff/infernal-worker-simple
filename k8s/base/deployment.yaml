@@ -73,6 +73,14 @@ spec:
             # one instead.
             # - name: ENROLLMENT_CHALLENGE
             #   value: ""
+            # Seconds to sleep between claiming a route and completing it;
+            # zero (the default) means instant, since the placeholder
+            # "execute" step has no real work to do. Set this to create a
+            # real window for deliberately killing this process mid-claim,
+            # for example to exercise reclaim/fencing against a genuine
+            # lease expiry.
+            # - name: WORK_DURATION_SECONDS
+            #   value: "0"
           volumeMounts:
             - name: kernel-ca-cert
               mountPath: /etc/infernal-law/ca

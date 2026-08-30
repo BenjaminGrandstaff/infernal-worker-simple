@@ -64,6 +64,13 @@ const POD_UID_ENV: &str = "POD_UID";
 /// `infernal-law-enrollment` audience.
 const WORKLOAD_TOKEN_PATH_ENV: &str = "WORKLOAD_TOKEN_PATH";
 const DEFAULT_WORKLOAD_TOKEN_PATH: &str = "/var/run/secrets/infernal-law-enrollment/token";
+/// How long to sleep between claiming a route and completing it -- zero
+/// (instant) by default, since the placeholder "execute" step has no real
+/// work to do. Set this to deliberately create a window in which this
+/// process can be killed mid-claim, for example to exercise reclaim and
+/// fencing against a real lease expiry rather than only in a unit test
+/// with synthetic timestamps.
+const WORK_DURATION_SECONDS_ENV: &str = "WORK_DURATION_SECONDS";
 const DEFAULT_LEASE_SECONDS: i64 = 300;
 const DEFAULT_POLL_INTERVAL_SECONDS: u64 = 5;
 
@@ -71,6 +78,7 @@ pub struct Config {
     pub client: KernelClient,
     pub lease_seconds: i64,
     pub poll_interval: Duration,
+    pub work_duration: Duration,
 }
 
 impl Config {
@@ -96,6 +104,10 @@ impl Config {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_POLL_INTERVAL_SECONDS);
+        let work_duration_seconds = env::var(WORK_DURATION_SECONDS_ENV)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
         let credential = ClientCredential::generate(service_id);
         let client = match env::var(KERNEL_CA_CERT_PATH_ENV) {
             Ok(path) => {
@@ -123,6 +135,7 @@ impl Config {
             client,
             lease_seconds,
             poll_interval: Duration::from_secs(poll_interval_seconds),
+            work_duration: Duration::from_secs(work_duration_seconds),
         })
     }
 }
@@ -145,7 +158,7 @@ fn decode_challenge(value: &str) -> Result<[u8; infernal_client::CHALLENGE_LENGT
 /// uptime.
 pub fn run(config: Config) -> ! {
     loop {
-        match worker::work_once(&config.client, config.lease_seconds) {
+        match worker::work_once(&config.client, config.lease_seconds, config.work_duration) {
             Ok(worker::WorkOutcome::NothingEligible) => {}
             Ok(outcome) => println!("{outcome:?}"),
             Err(error) => eprintln!("work pass failed: {error}"),

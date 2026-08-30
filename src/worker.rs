@@ -56,7 +56,11 @@ fn execute(request: &RoutedRequest) -> String {
     )
 }
 
-pub fn work_once(port: &impl KernelPort, lease_seconds: i64) -> Result<WorkOutcome, WorkerError> {
+pub fn work_once(
+    port: &impl KernelPort,
+    lease_seconds: i64,
+    work_duration: std::time::Duration,
+) -> Result<WorkOutcome, WorkerError> {
     let routes = port.eligible_routes()?;
     let Some(route) = routes.into_iter().next() else {
         return Ok(WorkOutcome::NothingEligible);
@@ -81,6 +85,15 @@ pub fn work_once(port: &impl KernelPort, lease_seconds: i64) -> Result<WorkOutco
     };
 
     let action = execute(&request);
+
+    // Real work takes real time between claiming and completing --
+    // zero by default (the placeholder "execute" step above is
+    // instantaneous), but configurable so a deployed process can be
+    // killed mid-claim on purpose to exercise reclaim/fencing for real,
+    // not just in a unit test with synthetic timestamps.
+    if !work_duration.is_zero() {
+        std::thread::sleep(work_duration);
+    }
 
     match port.complete_claim(&claim.claim_id, claim.fencing_token)? {
         CompleteOutcome::Completed(_) => Ok(WorkOutcome::Completed {
@@ -186,7 +199,7 @@ mod tests {
     fn does_nothing_when_no_route_is_eligible() {
         let port = FakePort::default();
 
-        let outcome = work_once(&port, 300).unwrap();
+        let outcome = work_once(&port, 300, std::time::Duration::ZERO).unwrap();
 
         assert!(matches!(outcome, WorkOutcome::NothingEligible));
     }
@@ -199,7 +212,7 @@ mod tests {
             ..FakePort::default()
         };
 
-        let outcome = work_once(&port, 300).unwrap();
+        let outcome = work_once(&port, 300, std::time::Duration::ZERO).unwrap();
 
         assert!(matches!(outcome, WorkOutcome::ClaimLost { route_id } if route_id == "route-1"));
     }
@@ -213,7 +226,7 @@ mod tests {
             ..FakePort::default()
         };
 
-        let outcome = work_once(&port, 300).unwrap();
+        let outcome = work_once(&port, 300, std::time::Duration::ZERO).unwrap();
 
         assert!(
             matches!(outcome, WorkOutcome::RequestUnavailable { route_id } if route_id == "route-1")
@@ -229,7 +242,7 @@ mod tests {
             complete_outcome: Some(CompleteOutcome::Fenced),
         };
 
-        let outcome = work_once(&port, 300).unwrap();
+        let outcome = work_once(&port, 300, std::time::Duration::ZERO).unwrap();
 
         assert!(matches!(
             outcome,
@@ -250,7 +263,7 @@ mod tests {
             })),
         };
 
-        let outcome = work_once(&port, 300).unwrap();
+        let outcome = work_once(&port, 300, std::time::Duration::ZERO).unwrap();
 
         match outcome {
             WorkOutcome::Completed {
