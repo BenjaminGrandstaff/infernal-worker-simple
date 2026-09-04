@@ -18,6 +18,7 @@
 
 pub mod claims;
 pub mod error;
+pub mod health;
 pub mod instance_lease;
 pub mod kernel_client;
 pub mod routed_request;
@@ -187,7 +188,7 @@ fn decode_challenge(value: &str) -> Result<[u8; infernal_client::CHALLENGE_LENGT
 /// should not take a worker down entirely, and the kernel's own claim
 /// arbitration is what actually has to be correct, not this loop's
 /// uptime.
-pub fn run(config: Config) -> ! {
+pub fn run(config: Config, heartbeat: health::Heartbeat) -> ! {
     let Config {
         client,
         lease_seconds,
@@ -198,8 +199,16 @@ pub fn run(config: Config) -> ! {
     loop {
         renew_lease_if_due(&client, &mut instance_lease);
         match worker::work_once(&client, lease_seconds, work_duration) {
-            Ok(worker::WorkOutcome::NothingEligible) => {}
-            Ok(outcome) => println!("{outcome:?}"),
+            // Having nothing eligible to claim is a healthy answer from
+            // the kernel, not a failure, so it keeps the heartbeat fresh.
+            // Only an error leaves it to go stale.
+            Ok(worker::WorkOutcome::NothingEligible) => {
+                heartbeat.record_success(health::now_seconds());
+            }
+            Ok(outcome) => {
+                heartbeat.record_success(health::now_seconds());
+                println!("{outcome:?}");
+            }
             Err(error) => eprintln!("work pass failed: {error}"),
         }
         std::thread::sleep(poll_interval);
